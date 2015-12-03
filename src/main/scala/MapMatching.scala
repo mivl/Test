@@ -1,6 +1,7 @@
 import breeze.linalg._
 import breeze.stats.distributions._
 import com.thesamet.spatial.KDTree
+import org.apache.spark.SparkContext
 import org.apache.spark.graphx.{EdgeDirection, Edge, Graph}
 import org.apache.spark.rdd.RDD
 
@@ -15,7 +16,7 @@ case class Point(lat: Double, lng: Double) //extends (Double, Double)(lat, lng)
 
 object MapMatching {
 
-  def run(edges: RDD[String], vert: RDD[String], traj: RDD[String]): Unit = {
+  def run(sc: SparkContext, edges: RDD[String], vert: RDD[String], traj: RDD[String]): Unit = {
     val edges_1 = edges.map{ line =>
       val fields = line.split(",")
       (fields(1), fields(0)) //node1_id, edge_id
@@ -33,7 +34,7 @@ object MapMatching {
 
     val traj_ = traj.map{ line =>
       val fields = line.split(" ")
-      (fields(0), fields(1).toInt, Point(fields(3).toDouble, fields(4).toDouble)) //traj_id, timestamp, point
+      (fields(0), (fields(1).toInt, Point(fields(3).toDouble, fields(4).toDouble))) //traj_id, timestamp, point
     }
 
     val e = edges.map{ line =>
@@ -51,55 +52,77 @@ object MapMatching {
     val e1 = graph.edges.filter(e => e.attr == "571036913").first()
     val e2 = graph.edges.filter(e => e.attr == "250737111").first()
 
-    val spl = shortestPathLength(graph, e1, e2)
-    println(spl.toSeq)
+    //val spl = shortestPathLength(graph, e1, e2)
+    //println(spl.toSeq)
 
-    //val groupTraj = traj_.groupByKey()
+    val groupTraj = traj_.groupByKey()
 
-    //computeCandidatePoints(traj_, vert_, edges_1.union(edges_2))
+    val cand = computeCandidatePoints(traj_, vert_, edges_1.union(edges_2))
+    STMatching(sc, traj_, cand)
     traj_.count()
   }
 
-  def computeCandidatePoints(traj: RDD[(String, Int, Point)], vert: RDD[(String, Point)],
-                             edges: RDD[(String, String)]): Unit = {
+  def STMatching(sc: SparkContext, traj: RDD[(String, (Int, Point))], cand: RDD[(String, (Int, Iterable[Point]))]): Unit = {
+    val candMap = cand.groupByKey().collectAsMap()
+
+    val point = traj.map{l => ((l._1, l._2._1), l._2._2)}
+    val m = cand.map{l => ((l._1, l._2._1), l._2._2)}
+    val j = point.join(m).map{l => (l._2._2, l._2._1)}.map{l => (l._1.map(m => (m, observationProbability(m, l._2))))}
+
+    traj.groupByKey().map{ t =>
+      val candPoints = candMap(t._1)
+      //val v = sc.parallelize(candPoints.flatMap(p => p._2).toSeq).map(p => (p._2, observationProbability(p._2)))
+
+      (t._1, t._2.map{ p =>
+        //val pts =
+        //V' = compute candidate points
+        //E' = compute edges (?)
+        //generate graph G'(V', E')
+        //matched_sequence(G')
+      })
+    }
+  }
+
+  def computeCandidatePoints(traj: RDD[(String, (Int, Point))], vert: RDD[(String, Point)],
+                             edges: RDD[(String, String)]): RDD[(String, (Int, Iterable[Point]))] = {
     val vert_ = vert.map{l => (l._2.lat, l._2.lng)}.collect()
     val tree = KDTree.fromSeq(vert_)
 
     val candTemp = traj.map{ l =>
-      val nearest = tree.findNearest((l._3.lat, l._3.lng), 1).head
-      (l._1, l._2, Point(nearest._1, nearest._2)) //traj_id, nearestVertex
+      val nearest = tree.findNearest((l._2._2.lat, l._2._2.lng), 1).head
+      (l._1, l._2._1, Point(nearest._1, nearest._2)) //traj_id, nearestVertex
     }
 
     val vertMap = vert.map{l => (l._2, l._1)}.collect().toMap
     val candTemp2 = candTemp.map{ l =>
-      (l._1, l._2, vertMap.get(l._3).head) //traj_id, node_id
+      (l._1, l._2, vertMap(l._3)) //traj_id, node_id
     }
 
     val edgesMap = edges.groupByKey().collect().toMap
 
     val candEdges = candTemp2.map{ l =>
-      val r = edgesMap.get(l._3).head
+      val r = edgesMap(l._3)
       (l._1, l._2, r) //traj_id, timestamp, edge_id set of candidate edges
     }
 
-    val trajMap = traj.map{l => ((l._1, l._2), l._3)}.collect().toMap
+    val trajMap = traj.map{l => ((l._1, l._2._1), l._2._2)}.collect().toMap
     val vertMap2 = vert.collect().toMap
     val edgeToPointMap = edges.map{l => (l._2, l._1)}.groupByKey().map{ l =>
       (l._1, l._2.map{m =>
-        vertMap2.get(m).head
+        vertMap2(m)
       })}.collect().toMap
 
     val candPoints = candEdges.map{ l =>
-      (l._1, l._2, l._3.map{ m =>
-        val p = trajMap.get(l._1, l._2).head
-        val c = edgeToPointMap.get(m).head
+      (l._1, (l._2, l._3.map{ m =>
+        val p = trajMap(l._1, l._2)
+        val c = edgeToPointMap(m)
         val A = c.head
         val B = c.last
         val res = pointToLineSegmentProjection(A, B, p)
-        (m, Point(res(0), res(1)))
-      })
-    } //traj_id, timestamp, set of (candEdge, Point)
-    candPoints.foreach(println)
+        (Point(res(0), res(1)))
+      }))
+    } //(traj_id, timestamp), set of (candEdge, Point)
+    candPoints
   }
 
   def pointToLineSegmentProjection(A: Point, B: Point, p: Point): DenseVector[Double] = {
@@ -124,7 +147,8 @@ object MapMatching {
     }
   }
 
-  def observationProbability(x: Double): Double = {
+  def observationProbability(p1: Point, p2: Point): Double = { //where p1 is a candidate point of trajectory point p2
+    val x = euclideanDistance(p1, p2)
     val mean = 0
     val std_dev = 20
     val nd = Gaussian(mean, std_dev)
@@ -132,7 +156,7 @@ object MapMatching {
   }
 
   def transmissionProbability(graph: Graph[(String, String), String], p1: Point, p2: Point, c1: Point, c2: Point): Double = {
-    //euclideanDistance(p1, p2)/shortestPathLength(graph, e1, e2, 0)
+    //euclideanDistance(p1, p2)/shortestPathLength(graph, e1, e2).size
     0
   }
 

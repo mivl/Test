@@ -136,7 +136,7 @@ object Main {
 
     //val fs = FlowScan.run(nodes_, graph, traffic, eps, minTraffic, sc)
 
-    val mm = MapMatching.run(edges, nodes, traj)
+    val mm = MapMatching.run(sc, edges, nodes, traj)
 
     val elapsedTime = System.currentTimeMillis() - startTime
     println("Time: " + elapsedTime + " ms")
