@@ -63,23 +63,31 @@ object MapMatching {
   }
 
   def STMatching(sc: SparkContext, traj: RDD[(String, (Int, Point))], cand: RDD[(String, (Int, Iterable[Point]))]): Unit = {
-    val candMap = cand.groupByKey().collectAsMap()
+    val candGroup = cand.groupByKey()
+    val candMap = candGroup.collectAsMap()
 
-    val point = traj.map{l => ((l._1, l._2._1), l._2._2)}
-    val m = cand.map{l => ((l._1, l._2._1), l._2._2)}
-    val j = point.join(m).map{l => (l._2._2, l._2._1)}.map{l => (l._1.map(m => (m, observationProbability(m, l._2))))}
+    val point = traj.map{l => ((l._1, l._2._1), l._2._2)}.collectAsMap()
 
-    traj.groupByKey().map{ t =>
+    //val x = candGroup.flatMap{l => l._2.map{m => (m._2, point(l._1, m._1))}}
+
+    //val x2 = x.map{l => (l._1.toSeq, l._2)}
+    //x2.foreach(println)
+
+    //val m = cand.map{l => l._2._2.map{m => (m, point(l._1, l._2._1))})}
+    //val j = point.join(m).map{l => (l._2._2, l._2._1)}.map{l => (l._1.map(m => (m, observationProbability(m, l._2))))}
+
+    traj.groupByKey().collect().foreach{ t =>
       val candPoints = candMap(t._1)
+      val x = candPoints.flatMap{l => l._2.map{m => (m, point(t._1, l._1))}}
+      val x2 = sc.parallelize(x.toSeq)
+      x2.foreach(println)
       //val v = sc.parallelize(candPoints.flatMap(p => p._2).toSeq).map(p => (p._2, observationProbability(p._2)))
-
-      (t._1, t._2.map{ p =>
-        //val pts =
-        //V' = compute candidate points
+      //(t._1, t._2.map{ p =>
+        //V' = compute candidate points (Point, obsProb) zipwithUniqueIndex?
         //E' = compute edges (?)
         //generate graph G'(V', E')
         //matched_sequence(G')
-      })
+      //})
     }
   }
 
