@@ -48,39 +48,39 @@ object MapMatching {
     }
 
     val graph = Graph(v, e)
-
-    val e1 = graph.edges.filter(e => e.attr == "571036913").first()
-    val e2 = graph.edges.filter(e => e.attr == "250737111").first()
-
-    //val spl = shortestPathLength(graph, e1, e2)
-    //println(spl.toSeq)
-
     val groupTraj = traj_.groupByKey()
+    val cand = computeCandidatePoints(traj_, vert_, e)
+    STMatching(graph, traj_, cand)
+    cand.count()
 
-    val cand = computeCandidatePoints(traj_, vert_, edges_1.union(edges_2))
-    STMatching(sc, traj_, cand)
-    traj_.count()
   }
 
-  def STMatching(sc: SparkContext, traj: RDD[(String, (Int, Point))], cand: RDD[(String, (Int, Iterable[Point]))]): Unit = {
-    val candGroup = cand.groupByKey()
-    val candMap = candGroup.collectAsMap()
+  def STMatching(graph: Graph[(String, String), String], traj: RDD[(String, (Int, Point))],
+                 cand: RDD[((String, Int), Iterable[(Edge[String], Point)])]): Unit = {
 
-    val point = traj.map{l => ((l._1, l._2._1), l._2._2)}.collectAsMap()
+    val tpoint = traj.map{l => ((l._1, l._2._1), l._2._2)} //map from each trajectory point (represented by a pair of String, Int) to its Point
+    val candPoint = cand.join(tpoint).flatMap{l => l._2._1.map{m =>
+        (l._1._1, l._1._2, m, (observationProbability(m._2, l._2._2)))}
+      }.zipWithUniqueId() // ((traj_id, timestamp, candidate p, transmission probability of p), Long)
 
-    //val x = candGroup.flatMap{l => l._2.map{m => (m._2, point(l._1, m._1))}}
+    val candEges = candPoint.map{l => (l._1._1, (l._1._2, l._2))}.groupByKey()
 
-    //val x2 = x.map{l => (l._1.toSeq, l._2)}
-    //x2.foreach(println)
+    val f = traj.groupByKey().first()
 
-    //val m = cand.map{l => l._2._2.map{m => (m, point(l._1, l._2._1))})}
-    //val j = point.join(m).map{l => (l._2._2, l._2._1)}.map{l => (l._1.map(m => (m, observationProbability(m, l._2))))}
+    val vertices = candPoint.filter(l => l._1._1 == f._1).map{l => (l._2, l._1._4)} // needs to do distintict()
+    
+    val temp = candPoint.filter(l => l._1._1 == f._1).map{l => (l._1._2, l._1._3, l._2)}
+    val edges = temp.cartesian(temp).filter{case (a,b) => a._1 == b._1 - 1}.map{l =>
+      val transProb = transmissionProbability(graph, l._1._2._1, l._2._2._1)
+      Edge(l._1._3, l._2._3, transProb)
+    }
+    edges.foreach(println)
 
-    traj.groupByKey().collect().foreach{ t =>
-      val candPoints = candMap(t._1)
-      val x = candPoints.flatMap{l => l._2.map{m => (m, point(t._1, l._1))}}
-      val x2 = sc.parallelize(x.toSeq)
-      x2.foreach(println)
+    /*traj.groupByKey().collect().foreach{ t =>
+      val vertices = candPoint.filter(l => l._1._1 == t._1).map{l => (l._2, l._1._4)}
+      val temp = candPoint.filter(l => l._1._1 == t._1).map{l => (l._1._2, l._1._3, l._2)}
+      val edges = temp.cartesian(temp).filter{case (a,b) => a._1 == b._1 - 1}
+      edges.foreach(println)
       //val v = sc.parallelize(candPoints.flatMap(p => p._2).toSeq).map(p => (p._2, observationProbability(p._2)))
       //(t._1, t._2.map{ p =>
         //V' = compute candidate points (Point, obsProb) zipwithUniqueIndex?
@@ -88,11 +88,11 @@ object MapMatching {
         //generate graph G'(V', E')
         //matched_sequence(G')
       //})
-    }
+    }*/
   }
 
   def computeCandidatePoints(traj: RDD[(String, (Int, Point))], vert: RDD[(String, Point)],
-                             edges: RDD[(String, String)]): RDD[(String, (Int, Iterable[Point]))] = {
+                             edges: RDD[Edge[String]]): RDD[((String, Int), Iterable[(Edge[String], Point)])] = {
     val vert_ = vert.map{l => (l._2.lat, l._2.lng)}.collect()
     val tree = KDTree.fromSeq(vert_)
 
@@ -106,30 +106,29 @@ object MapMatching {
       (l._1, l._2, vertMap(l._3)) //traj_id, node_id
     }
 
-    val edgesMap = edges.groupByKey().collect().toMap
+    val eMap = edges.map{l => (l.srcId, l)}.union(edges.map{l => (l.dstId, l)}).groupByKey().collect().toMap
 
     val candEdges = candTemp2.map{ l =>
-      val r = edgesMap(l._3)
-      (l._1, l._2, r) //traj_id, timestamp, edge_id set of candidate edges
+      //val r = edgesMap(l._3)
+      val r = eMap(l._3.toLong)
+      (l._1, l._2, r) //traj_id, timestamp, set of candidate edges
     }
 
     val trajMap = traj.map{l => ((l._1, l._2._1), l._2._2)}.collect().toMap
-    val vertMap2 = vert.collect().toMap
-    val edgeToPointMap = edges.map{l => (l._2, l._1)}.groupByKey().map{ l =>
-      (l._1, l._2.map{m =>
-        vertMap2(m)
-      })}.collect().toMap
+    val pointMap = vert.map{l => (l._1.toLong, l._2)}.collect().toMap
+
+    val edgeToPointMap2 = edges.map{l => (l, (pointMap(l.srcId), pointMap(l.dstId)))}.collect().toMap
 
     val candPoints = candEdges.map{ l =>
-      (l._1, (l._2, l._3.map{ m =>
+      ((l._1, l._2), l._3.map{ m =>
         val p = trajMap(l._1, l._2)
-        val c = edgeToPointMap(m)
-        val A = c.head
-        val B = c.last
+        val c = edgeToPointMap2(m)
+        val A = c._1
+        val B = c._2
         val res = pointToLineSegmentProjection(A, B, p)
-        (Point(res(0), res(1)))
-      }))
-    } //(traj_id, timestamp), set of (candEdge, Point)
+        (m, (Point(res(0), res(1))))
+      })
+    }
     candPoints
   }
 
@@ -163,9 +162,8 @@ object MapMatching {
     nd.pdf(x)
   }
 
-  def transmissionProbability(graph: Graph[(String, String), String], p1: Point, p2: Point, c1: Point, c2: Point): Double = {
-    //euclideanDistance(p1, p2)/shortestPathLength(graph, e1, e2).size
-    0
+  def transmissionProbability(graph: Graph[(String, String), String], p1: Point, p2: Point, e1: Edge[String], e2: Edge[String]): Double = {
+    euclideanDistance(p1, p2)/shortestPathLength(graph, e1, e2).size
   }
 
   def euclideanDistance(p1: Point, p2: Point) = {
@@ -200,32 +198,4 @@ object MapMatching {
     }
     recursiveSPL(graph, queue, path, e2)
   }
-
-  /*def shortestPathLength(graph: Graph[(String, String), String], e1: Edge[String], e2: Edge[String]): Int = {
-    val queue = Queue[Edge[String]]()
-    val pathLength = Map[Edge[String], Int]()
-    val parent = Map[Edge[String], Edge[String]]()
-    queue.enqueue(e1)
-    pathLength.put(e1, 0)
-
-    def recursiveSPL(graph: Graph[(String, String), String], queue: Queue[Edge[String]], pathLength: Map[Edge[String], Int], e2: Edge[String]): Int = {
-      if(queue.nonEmpty && pathLength.maxBy(_._2)._2 <= 10) {
-        val actual = queue.dequeue()
-        if(actual.attr == e2.attr) {
-          pathLength(actual)
-        } else {
-          val nextSet = graph.edges.filter(e => e.srcId == actual.dstId).collect()
-          nextSet.foreach(e =>
-            if(e.attr == e2.attr)
-              return pathLength(actual)+1
-          )
-          nextSet.foreach(e => queue.enqueue(e))
-          nextSet.foreach(e => pathLength.put(e, pathLength(actual)+1))
-          nextSet.foreach(e => parent.put(e, actual))
-          recursiveSPL(graph, queue, pathLength, e2)
-        }
-      } else -1
-    }
-    recursiveSPL(graph, queue, pathLength, e2)
-  }*/
 }
