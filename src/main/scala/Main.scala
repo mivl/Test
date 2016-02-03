@@ -1,10 +1,9 @@
 import com.thesamet.spatial.{DimensionalOrdering, KDTree}
 import org.apache.spark.graphx._
-import org.apache.spark.graphx.lib.ShortestPaths
+import org.apache.spark.graphx.util.GraphGenerators
 import org.apache.spark.rdd.RDD
-import org.apache.spark.{SparkFiles, SparkContext, SparkConf}
+import org.apache.spark.{SparkContext, SparkConf}
 import org.apache.spark._
-import math._
 import org.apache.log4j.Logger
 import org.apache.log4j.Level
 
@@ -32,26 +31,27 @@ object Main {
   def main(arg: Array[String]) {
     val startTime = System.currentTimeMillis()
 
-    //Logger.getLogger("org").setLevel(Level.OFF)
-    //Logger.getLogger("akka").setLevel(Level.OFF)
+    Logger.getLogger("org").setLevel(Level.OFF)
+    Logger.getLogger("akka").setLevel(Level.OFF)
 
-    val jobName = "EdgeCount"
+    val jobName = "Distances"
 
-    //val conf = new SparkConf().setAppName(jobName).setMaster("spark://ldiag-master:7077")//.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-    //conf.registerKryoClasses(Array(classOf[KDTree]))
+    val conf = new SparkConf().setAppName(jobName).setMaster("spark://ldiag-master:7077").set("spark.executor.memory", "6g").set("spark.driver.memory", "2g")
 
-    val conf = new SparkConf().setAppName(jobName).setMaster("local[*]")
+    //val conf = new SparkConf().setAppName(jobName).setMaster("local[*]")
     val sc = new SparkContext(conf)
 
-    val edges = sc.textFile("3760-Edges.txt")
-    val nodes = sc.textFile("3760-Nodes.txt")
-    val traj = sc.textFile("3760.txt")
+    //sc.addJar("/home/isabel/IdeaProjects/Test/target/scala-2.10/test_2.10-1.0.jar")
 
-    //val edges = sc.textFile("hdfs://ldiag-master:9000/user/lsbd/datasets/3590-Edges.txt")
-    //val nodes = sc.textFile("hdfs://ldiag-master:9000/user/lsbd/datasets/3590-Nodes.txt")
-    //val traj = sc.textFile("hdfs://ldiag-master:9000/user/lsbd/datasets/3590.txt", 500)
+    //val edges = sc.textFile("3760-Edges.txt")
+    //val nodes = sc.textFile("3760-Nodes.txt")
+    //val traj = sc.textFile("3760.txt")
 
-    edges.persist(org.apache.spark.storage.StorageLevel.MEMORY_ONLY)
+    val edges = sc.textFile("hdfs://ldiag-master:9000/user/isabel/3760-Edges.txt")
+    val nodes = sc.textFile("hdfs://ldiag-master:9000/user/isabel/3760-Nodes.txt")
+    val traj = sc.textFile("hdfs://ldiag-master:9000/user/isabel/3760.txt")
+
+    /*edges.persist(org.apache.spark.storage.StorageLevel.MEMORY_ONLY)
 
     val edges_1 = edges.map{ line =>
       val fields = line.split(",")
@@ -118,25 +118,17 @@ object Main {
 
     val traffic = fin.union(zeros) // (edge e, set of traj_ids that pass through e)
     //val trafficSize = traffic.map{l => (l._1, l._2.size)}.collectAsMap() // (edge e, number of traj_ids that pass through e)
-
-    val e_ = edges.map{ line =>
-      val fields = line.split(",")
-      Edge(fields(1).toLong, fields(2).toLong, fields(0))
-    }
-
-    val v_ = nodes.map{ line =>
-      val fields = line.split(",")
-      (fields(0).toLong, (fields(1), fields(2)))
-    }
-
-    val graph = Graph(v_, e_)
-
-    val eps = 1
-    val minTraffic = 10
-
-    //val fs = FlowScan.run(nodes_, graph, traffic, eps, minTraffic, sc)
+*/
 
     val mm = MapMatching.run(sc, edges, nodes, traj)
+
+    //val vertSeq = graph_.vertices.map(v => v._1).collect().toSeq
+    //val sp = ShortestPaths.run(graph_, vertSeq)
+    //sp.vertices.collect().foreach(println)
+    //sp.vertices.saveAsObjectFile("hdfs://ldiag-master:9000/user/isabel/sp")
+
+    //val spp = sc.objectFile[(VertexId, ShortestPaths.SPMap)]("hdfs://ldiag-master:9000/user/isabel/sp")
+    //spp.collect().foreach(println)
 
     val elapsedTime = System.currentTimeMillis() - startTime
     println("Time: " + elapsedTime + " ms")
