@@ -5,7 +5,8 @@ import org.apache.spark.{graphx, SparkContext}
 import org.apache.spark.graphx._
 import org.apache.spark.rdd.RDD
 
-import scala.collection.mutable.{Map}
+import scala.collection.mutable
+import scala.collection.mutable.{ListBuffer, Map}
 import scala.math._
 
 /**
@@ -51,6 +52,9 @@ object MapMatching {
 
     val groupTraj = traj_.groupByKey()
     val cand = computeCandidatePoints(traj_, graph.vertices, graph.edges)
+    //val nc = cand.filter(c => c._1._1 == 763).flatMap{c => c._2.map{m => (c._1, m._2)}}
+    //nc.collect().foreach(println)
+
     STMatching(traj_, sp_, cand)
     groupTraj.count()
   }
@@ -60,11 +64,18 @@ object MapMatching {
 
     val f = traj.groupByKey().filter{l => l._1.equals(294.toLong)}.first()
     val tpoint = traj.map{l => ((l._1, l._2._1), l._2._2)}
+
     val candPoint = cand.join(tpoint).flatMap{l => l._2._1.map{m =>
-        (l._1._1, l._1._2, observationProbability(m._2, l._2._2), m._1.srcId)}
+        (l._1._1, l._1._2, observationProbability(m._2, l._2._2), m._1.srcId, m._2)}
       }.zipWithUniqueId().filter(l => l._1._1.equals(f._1)) // (traj_id, timestamp, obsProb(p))
 
-    val vertices = candPoint.map{l => (l._2, l._1._3)}
+    candPoint.cache() //EXTREMAMENTE IMPORTANTE (sem essa persistência, os ids serão recomputados a cada acesso)
+
+    val cpMap = candPoint.map{l => (l._2, l._1._5)}.collectAsMap()
+
+    val startTime = candPoint.map{l => l._1._2}.min()
+
+    val vertices = candPoint.map{l => (l._2, (l._1._3, l._1._2))}./*filter(l => l._2._2 > 2).*/map{l => if(l._2._2 == startTime) (l._1, (l._1, l._2._1)) else (l._1, (None, l._2._1))}
 
     val tpointMap = tpoint.collectAsMap() //map from each trajectory point (represented by a pair of String, Int) to its Point
     
@@ -78,24 +89,48 @@ object MapMatching {
       val p1 = tpointMap(f._1, l._1._1)
       val p2 = tpointMap(f._1, l._2._1)
       val transProb = euclideanDistance(p1, p2)/spMap(c1, c2)
-      //val transProb = transmissionProbability(tpointMap(f._1, l._1._1), tpointMap(f._1, l._2._1), l._1._2, l._2._2, spMap)
       Edge(l._1._3, l._2._3, transProb)
     }.filter{l => !l.attr.equals(Double.PositiveInfinity)}
 
     val subgraph = Graph(vertices, edges)
 
-    val mes = subgraph.aggregateMessages[(Double)](ctx => ctx.sendToDst(ctx.dstAttr + ctx.attr * ctx.dstAttr), (a,b) => scala.math.max(a,b))
+    val sssp = subgraph.pregel((-1.toLong, -1.toDouble))(
+      (id, dist, newDist) => {
+        if(newDist != (-1.toLong, -1.toDouble)) newDist else dist
+      },
+      triplet => {
+        if(triplet.srcAttr._1 != None && triplet.dstAttr._1 == None) {
+          Iterator((triplet.dstId, (triplet.srcId, triplet.srcAttr._2 + triplet.attr * triplet.dstAttr._2)))
+        } else {
+          Iterator.empty
+        }
+      },
+      (a, b) => if (math.max(a._2, b._2) == a._2) a else b
+    )
 
-    vertices.collect().foreach(println)
-    println()
-    edges.collect().foreach(println)
-    println()
-    subgraph.vertices.collect().foreach(println)
-    println()
-    subgraph.edges.collect().foreach(println)
-    //()
-    //mes.collect().foreach(println)*/
+    val parent = sssp.vertices.filter(v => v._2._1 != None).map(v => (v._1, v._2._1.asInstanceOf[Long])).collectAsMap() //parent map
+    val v = sssp.vertices.map(v => (v._2._2, v._1)).max()._2
 
+    var path = new ListBuffer[Long]()
+    path += v
+    while(parent(path.last) != path.last) {
+      path += parent(path.last)
+    }
+
+    path.reverse.toList
+    val p = path.map{l => cpMap(l)}
+
+    //g.vertices.collect().foreach(println)
+    //println()
+    //g.edges.collect().foreach(println)
+
+    println(toPrintable(p.reverse.toList))
+    println()
+    println(toPrintable(f._2.map{l => l._2}.toList))
+  }
+
+  def toPrintable(path: List[Point]): String = {
+    path.toSeq.map(p => p.lat + "*" + p.lng).toString().drop(5).dropRight(1)
   }
 
   def computeCandidatePoints(traj: RDD[(Long, (Int, Point))], vert: RDD[(Long, Point)],
@@ -105,10 +140,17 @@ object MapMatching {
     val tree = KDTree.fromSeq(treeVert)
     val vertMap = vert.map{l => (l._2, l._1)}.collectAsMap()
 
-    val candTemp = traj.map{ l =>
+    /*val candTemp = traj.map{ l =>
       val nearest = tree.findNearest((l._2._2.lat, l._2._2.lng), 1).head
       (l._1, l._2._1, vertMap(Point(nearest._1, nearest._2))) //traj_id, timestamp, nearestVertex_id
+    }*/
+
+    val candTemp_ = traj.map{ l =>
+      val nearest = tree.findNearest((l._2._2.lat, l._2._2.lng), 6)
+      ((l._1, l._2._1), nearest) //traj_id, timestamp, nearestVertex_id
     }
+
+    val candTemp = candTemp_.flatMapValues(v => v).map{v => (v._1._1, v._1._2, vertMap(Point(v._2._1, v._2._2)))}
 
     val eMap = edges.map{l => (l.srcId, l)}.union(edges.map{l => (l.dstId, l)}).groupByKey().collectAsMap()
 
@@ -129,7 +171,7 @@ object MapMatching {
         val A = c._1
         val B = c._2
         val res = pointToLineSegmentProjection(A, B, p)
-        (m, (Point(res(0), res(1))))
+        (m, Point(res(0), res(1)))
       })
     }
     candPoints
@@ -140,13 +182,13 @@ object MapMatching {
     val vB = DenseVector(B.lat, B.lng)
     val vp = DenseVector(p.lat, p.lng)
 
-    val AB = (vB-vA)
+    val AB = vB - vA
     val AB_squared = AB.t * AB //AB dot AB
 
     if(AB_squared == 0) { //A and B are the same point
       vA
     } else {
-      val Ap = (vp-vA)
+      val Ap = vp - vA
       val t = (Ap.t * AB) / AB_squared
       if (t < 0.0)
         vA
@@ -166,13 +208,13 @@ object MapMatching {
     //1/(sqrt(2*Pi)*20)*exp(-pow(x,2)/800)
   }
 
-  def transmissionProbability(p1: Point, p2: Point, c1: VertexId, c2: VertexId, spMap: Map[(VertexId, VertexId), Int]): Double = {
+  def transmissionProbability(p1: Point, p2: Point, c1: VertexId, c2: VertexId, spMap: mutable.Map[(VertexId, VertexId), Int]): Double = {
     //euclideanDistance(p1, p2)/shortestPathLength(outEdges, e1, e2).length
     euclideanDistance(p1, p2)/spMap(c1, c2)
   }
 
   def euclideanDistance(p1: Point, p2: Point): Double = {
-    sqrt(pow((p2.lat - p1.lat), 2) + pow((p2.lng - p1.lng), 2))
+    sqrt(pow(p2.lat - p1.lat, 2) + pow(p2.lng - p1.lng, 2))
   }
 
   /*def shortestPaths(sc: SparkContext, graph: Graph[(String, String), String]): Array[(VertexId, VertexRDD[Double])] = {

@@ -91,7 +91,7 @@ object FlowScan {
                                      eps: Int, minTraffic: Int): Boolean = {
 
     var actual = r.last
-    val q = Queue[Edge[String]]()
+    val q = mutable.Queue[Edge[String]]()
 
     var eps_count = 0
 
@@ -109,7 +109,7 @@ object FlowScan {
         }
       )
       eps_count = eps_count + 1
-      if(!q.isEmpty)
+      if(q.nonEmpty)
         actual = q.dequeue()
       else
         flag = false
@@ -147,10 +147,10 @@ object FlowScan {
                       eps: Int, minTraffic: Int): ListBuffer[Array[Edge[String]]] = {
 
     val hotRoutes = new ListBuffer[Array[Edge[String]]]()
-    val stack = Stack[Array[Edge[String]]]()
+    val stack = mutable.Stack[Array[Edge[String]]]()
     stack.push(r)
 
-    while(!stack.isEmpty) {
+    while(stack.nonEmpty) {
       val actual = stack.pop()
       val Q = dtdr.get(actual.last)
       if (Q.isDefined) {
@@ -177,7 +177,7 @@ object FlowScan {
                                      eps: Int, minTraffic: Int): Boolean = {
 
     var actual = r
-    val q = Queue[Edge[String]]()
+    val q = mutable.Queue[Edge[String]]()
     var eps_count = 0
     var flag = true
 
@@ -193,7 +193,7 @@ object FlowScan {
         }
       )
       eps_count = eps_count + 1
-      if(!q.isEmpty)
+      if(q.nonEmpty)
         actual = q.dequeue()
       else
         flag = false
@@ -226,7 +226,7 @@ object FlowScan {
     //hr2.coalesce(1).saveAsTextFile("hr")
 
     val out = hr2.map{ l =>
-      l.map(m => nodesMap.get(m.srcId.toString).head + ", " + nodesMap.get(m.dstId.toString).head)
+      l.map(m => nodesMap(m.srcId.toString) + ", " + nodesMap(m.dstId.toString))
     }
 
     val out2 = out.map{l => l.toString().drop(12).dropRight(1)}
