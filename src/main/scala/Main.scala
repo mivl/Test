@@ -53,10 +53,10 @@ object Main {
 
     val mm = MapMatching.run(sc, edges, nodes, traj)
 
-    //val vertSeq = graph_.vertices.map(v => v._1).collect().toSeq
-    //val sp = ShortestPaths.run(graph_, vertSeq)
-    //sp.vertices.collect().foreach(println)
-    //sp.vertices.saveAsObjectFile("hdfs://ldiag-master:9000/user/isabel/sp")
+    /*val vertSeq = graph_.vertices.map(v => v._1).collect().toSeq
+    val sp = ShortestPaths.run(graph_, vertSeq)
+    sp.vertices.collect().foreach(println)
+    sp.vertices.saveAsObjectFile("hdfs://ldiag-master:9000/user/isabel/sp")*/
 
     //val spp = sc.objectFile[(VertexId, ShortestPaths.SPMap)]("hdfs://ldiag-master:9000/user/isabel/sp")
     //spp.collect().foreach(println)
