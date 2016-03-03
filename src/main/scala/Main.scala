@@ -41,7 +41,7 @@ object Main {
     //val conf = new SparkConf().setAppName(jobName).setMaster("local[*]")
     val sc = new SparkContext(conf)
 
-    //sc.addJar("/home/isabel/IdeaProjects/Test/target/scala-2.10/Test-assembly-1.0.jar")
+    sc.addJar("/home/isabel/IdeaProjects/Test/target/scala-2.10/Test-assembly-1.0.jar")
 
     //val edges = sc.textFile("3760-Edges.txt")
     //val nodes = sc.textFile("3760-Nodes.txt")
