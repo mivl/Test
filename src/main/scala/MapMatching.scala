@@ -49,9 +49,9 @@ object MapMatching {
 
     //val vertSeq = graph.vertices.map(v => v._1).collect().toSeq
     //val sp = ShortestPaths.run(graph, vertSeq)
-    //sp.vertices.saveAsObjectFile("hdfs://ldiag-master:9000/user/isabel/sp3")
+    //sp.vertices.saveAsObjectFile("hdfs://ldiag-master:9000/user/isabel/sp-3590")
 
-    val sp = sc.objectFile[(VertexId, ShortestPaths.SPMap)]("hdfs://ldiag-master:9000/user/isabel/sp3", 100)
+    val sp = sc.objectFile[(VertexId, ShortestPaths.SPMap)]("hdfs://ldiag-master:9000/user/isabel/sp-3760", 100)
     val sp_ = sp.flatMap(l => l._2.map(m => ((l._1, m._1), m._2)))
 
     val cand = computeCandidatePoints(traj_, graph.vertices, graph.edges)
@@ -81,7 +81,7 @@ object MapMatching {
     val edges = temp.flatMap{l =>
       if(tempMap.contains(l._1._1, l._1._2 + 1)) {
         val cp = tempMap(l._1._1, l._1._2 + 1)
-        cp/*filter{m => spMap.value.contains(l._2._1, m._1)}*/.map{ m =>
+        cp.map{ m =>
           val p1 = tpointMap(l._1._1, l._1._2)
           val p2 = tpointMap(l._1._1, l._1._2 + 1)
           if(spMap.value.contains(l._2._1, m._1)) {
@@ -114,44 +114,27 @@ object MapMatching {
       },
       (a, b) => if (math.max(a._2, b._2) == a._2) a else b
     )
+    val parent = sssp.vertices.filter(v => v._2._1 != None).map(v => (v._1, v._2._1.asInstanceOf[Long])).collectAsMap() //parent map
+    //val destVertices = sssp.mapVertices((vid, data) => 0).vertices.minus(sssp.outDegrees) //destination vertices
 
-    //val parent = sssp.vertices.filter(v => v._2._1 != None).map(v => (v._1, v._2._1.asInstanceOf[Long])).collectAsMap() //parent map
-    //val v = sssp.vertices.map(v => (v._2._2, v._1)).max()._2
+    val vertexToTrajMap = candPoint.map{l => (l._2, l._1._1)}.collectAsMap()
+    val maxKeys = sssp.mapVertices{(id, v) => (vertexToTrajMap(id), v._2)}.vertices.groupBy(_._2._1).map{v => v._2.max}.collectAsMap()
 
-    val destVertices = sssp.mapVertices((vid, data) => 0).vertices.minus(sssp.outDegrees) //destination vertices
+    val sssp2 = sssp.reverse.mapVertices{(id, v) => (v._1, Seq.empty[VertexId])}
 
-    val ssspRev = sssp.reverse
-
-
-    /*val temp = candPoint.map{l => (l._1._2, l._1._4, l._1._1, l._2)}
-
-    val edges = temp.cartesian(temp).filter{case (a,b) => (a._1 == b._1 - 1) && (a._3 == b._3)}.filter{l => spMap.contains(l._1._2, l._2._2)}.map{l => // e possuem o mesmo traj_id
-      val c1 = l._1._2
-      val c2 = l._2._2
-      val p1 = tpointMap(l._1._3, l._1._1)
-      val p2 = tpointMap(l._2._3, l._2._1)
-      val transProb = euclideanDistance(p1, p2)/spMap(c1, c2)
-      Edge(l._1._4, l._2._4, transProb)
-    }.filter{l => !l.attr.equals(Double.PositiveInfinity)}
-
-    val new_graph = Graph(vertices, edges)
-
-    val sssp = new_graph.pregel((-1.toLong, -1.toDouble))(
-      (id, dist, newDist) => {
-        if(newDist != (-1.toLong, -1.toDouble)) newDist else dist
+    val backtrack = sssp2.pregel(Seq.empty[VertexId])(
+      (id, vd, msg) => {
+        if(msg != Seq.empty[VertexId]) (vd._1, vd._2 ++ msg) else (vd._1, vd._2 ++ msg)
       },
       triplet => {
-        if(triplet.srcAttr._1 != None && triplet.dstAttr._1 == None) {
-          Iterator((triplet.dstId, (triplet.srcId, triplet.srcAttr._2 + triplet.attr * triplet.dstAttr._2)))
+        if(triplet.dstId == triplet.srcAttr._1) {
+          Iterator((triplet.dstId, triplet.srcAttr._2))
         } else {
           Iterator.empty
         }
       },
-      (a, b) => if (math.max(a._2, b._2) == a._2) a else b
+      (a, b) => a
     )
-
-    sssp.vertices.collect().foreach(println)*/
-
   }
 
   def STMatching(traj: RDD[(Long, (Int, Point))], sp: RDD[((VertexId, VertexId), Int)],
@@ -203,10 +186,10 @@ object MapMatching {
       (a, b) => if (math.max(a._2, b._2) == a._2) a else b
     )
 
-    val parent = sssp.vertices.filter(v => v._2._1 != None).map(v => (v._1, v._2._1.asInstanceOf[Long])).collectAsMap() //parent map
+    val parent = sssp.vertices.filter(v => v._2._1 != None).map(v => (v._1, v._2._1.asInstanceOf[Long]))//.collectAsMap() //parent map
     val v = sssp.vertices.map(v => (v._2._2, v._1)).max()._2
 
-    var path = new ListBuffer[Long]()
+    /*var path = new ListBuffer[Long]()
     path += v
     while(parent(path.last) != path.last) {
       path += parent(path.last)
@@ -223,20 +206,7 @@ object MapMatching {
 
     println(toPrintable(p.reverse.toList))
     println()
-    println(toPrintable(f._2.map{l => l._2}.toList))
-
-    //val mycp = candPoint.map{l => l._1._5.lat + ", " + l._1._5.lng + ", " + l._1._2}
-    //mycp.collect().foreach(println)
-
-    //subgraph.vertices.collect().foreach(println)
-    /*candPoint.collect().foreach(println)
-    println()
-    subgraph.edges.collect().foreach(println)
-    println()
-    println(toPrintable(p.reverse.toList))
-    println()
-    println(toPrintable(f._2.map{l => l._2}.toList))
-    println()*/
+    println(toPrintable(f._2.map{l => l._2}.toList))*/
   }
 
   def toPrintable(path: List[Point]): String = {
@@ -287,6 +257,43 @@ object MapMatching {
     candPoints
   }
 
+  def computeCandidatePoints2(traj: RDD[(Long, (Int, Point))], vert: RDD[(Long, Point)],
+                             edges: RDD[Edge[Long]]): RDD[((Long, Int), (Edge[Long], Point))] = {
+
+    val treeVert = vert.map{l => (l._2.lat, l._2.lng)}.collect()
+    val tree = KDTree.fromSeq(treeVert)
+    val vertMap = vert.map{l => (l._2, l._1)}.collectAsMap()
+
+    val candTemp = traj.map{ l =>
+      val nearest = tree.findNearest((l._2._2.lat, l._2._2.lng), 1)
+      ((l._1, l._2._1), nearest) //traj_id, timestamp, nearestVertex_id
+    }.flatMapValues(v => v).map{v => (v._1._1, v._1._2, vertMap(Point(v._2._1, v._2._2)))}
+
+    val eMap = edges.map{l => (l.srcId, l)}.union(edges.map{l => (l.dstId, l)}).groupByKey().mapValues(v => v.toSeq).collectAsMap()
+
+    val candEdges = candTemp.map{ l =>
+      val r = eMap(l._3.toLong)
+      ((l._1, l._2), r) //traj_id, timestamp, set of candidate edges
+    }.flatMapValues(v => v)
+
+    candEdges.collect().foreach(println)
+
+    val trajMap = traj.map{l => ((l._1, l._2._1), l._2._2)}.collectAsMap()
+    val pointMap = vert.map{l => (l._1.toLong, l._2)}.collectAsMap()
+
+    val edgeToPointMap2 = edges.map{l => (l, (pointMap(l.srcId), pointMap(l.dstId)))}.collectAsMap()
+
+    val candPoints = candEdges.map{ l =>
+      val p = trajMap(l._1._1, l._1._2)
+      val c = edgeToPointMap2(l._2)
+      val A = c._1
+      val B = c._2
+      val res = pointToLineSegmentProjection(A, B, p)
+      (l._1, (l._2, Point(res(0), res(1))))
+    }
+    candPoints
+  }
+
   def pointToLineSegmentProjection(A: Point, B: Point, p: Point): DenseVector[Double] = {
     val vA = DenseVector(A.lat, A.lng)
     val vB = DenseVector(B.lat, B.lng)
@@ -315,76 +322,13 @@ object MapMatching {
     val std_dev = 20
     val nd = Gaussian(mean, std_dev)
     nd.pdf(x)
-    //1/(sqrt(2*Pi)*20)*exp(-pow(x,2)/800)
   }
 
   def transmissionProbability(p1: Point, p2: Point, c1: VertexId, c2: VertexId, spMap: mutable.Map[(VertexId, VertexId), Int]): Double = {
-    //euclideanDistance(p1, p2)/shortestPathLength(outEdges, e1, e2).length
     euclideanDistance(p1, p2)/spMap(c1, c2)
   }
 
   def euclideanDistance(p1: Point, p2: Point): Double = {
     sqrt(pow(p2.lat - p1.lat, 2) + pow(p2.lng - p1.lng, 2))
   }
-
-  /*def shortestPaths(sc: SparkContext, graph: Graph[(String, String), String]): Array[(VertexId, VertexRDD[Double])] = {
-    graph.vertices.collect().map{v =>
-      val srcId = v._1
-
-      val new_graph = graph.mapVertices((id, _) => if (id == srcId) 0.0 else Double.PositiveInfinity)//.mapEdges(e => 1.0)
-
-      val bfs = new_graph.pregel(Double.PositiveInfinity, 10)(
-        (id, attr, msg) => math.min(attr, msg),
-
-        triplet => {
-          if (triplet.srcAttr != Double.PositiveInfinity && triplet.dstAttr == Double.PositiveInfinity) {
-            Iterator((triplet.dstId, triplet.srcAttr+1))
-          } else {
-            Iterator.empty
-          }
-        },
-
-        (a,b) => math.min(a,b)
-      )
-      (v._1, bfs.vertices)
-    }
-  }
-
-  def shortestPathLength(outEdges: Array[(graphx.VertexId, Array[Edge[String]])], e1: Edge[String], e2: Edge[String]): Array[Edge[String]] = {
-    val queue = Queue[Edge[String]]()
-    val path = Map[Edge[String], Array[Edge[String]]]()
-    queue.enqueue(e1)
-    path.put(e1, Array(e1))
-    val oeMap = outEdges.toMap
-    var count = 0
-
-    def recursiveSPL(path: Map[Edge[String], Array[Edge[String]]], e2: Edge[String], count: Int): Array[Edge[String]] = {
-
-      if(queue.nonEmpty && path.maxBy(_._2.size)._2.size <= 10) {
-        val actual = queue.dequeue()
-        if(actual.attr == e2.attr) {
-          path(actual)
-        } else {
-          //val nextSet = graph.edges.filter(e => (e.srcId.equals(actual.dstId)))
-          if(oeMap.contains(actual.dstId)) {
-            val nextSet = oeMap(actual.dstId)
-            nextSet.foreach(e =>
-              if(e.attr == e2.attr) {
-                path.put(e, path(actual) :+ e)
-                return path(e)
-              }
-            )
-            nextSet.foreach(e => queue.enqueue(e))
-            nextSet.foreach(e => path.put(e, path(actual) :+ e))
-            recursiveSPL(path, e2, count+1)
-          } else {
-            Array()
-          }
-        }
-      } else {
-        Array()
-      }
-    }
-    recursiveSPL(path, e2, count)
-  }*/
 }
