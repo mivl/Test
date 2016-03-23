@@ -47,9 +47,9 @@ object Main {
     //val nodes = sc.textFile("3760-Nodes.txt")
     //val traj = sc.textFile("3760.txt")
 
-    val edges = sc.textFile("hdfs://ldiag-master:9000/user/isabel/3760-Edges.txt")
-    val nodes = sc.textFile("hdfs://ldiag-master:9000/user/isabel/3760-Nodes.txt")
-    val traj = sc.textFile("hdfs://ldiag-master:9000/user/isabel/3760.txt")
+    val edges = sc.textFile("hdfs://ldiag-master:9000/user/isabel/3590-Edges.txt")
+    val nodes = sc.textFile("hdfs://ldiag-master:9000/user/isabel/3590-Nodes.txt")
+    val traj = sc.textFile("hdfs://ldiag-master:9000/user/isabel/3590.txt")
 
     val mm = MapMatching.run(sc, edges, nodes, traj)
 

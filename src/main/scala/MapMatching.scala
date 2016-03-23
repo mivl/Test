@@ -30,7 +30,7 @@ object MapMatching {
 
     val traj_ = traj.map { line =>
       val fields = line.split(" ")
-      (fields(0).toLong, (fields(1).toInt, Point(fields(3).toDouble, fields(4).toDouble))) //traj_id, timestamp, point
+      (fields(0).toLong, (fields(1).toInt, Point(fields(3).toDouble, fields(4).toDouble)))
     }
 
     val edges_ = edges.map { line =>
@@ -51,11 +51,10 @@ object MapMatching {
     //val sp = ShortestPaths.run(graph, vertSeq)
     //sp.vertices.saveAsObjectFile("hdfs://ldiag-master:9000/user/isabel/sp-3590")
 
-    val sp = sc.objectFile[(VertexId, ShortestPaths.SPMap)]("hdfs://ldiag-master:9000/user/isabel/sp-3760", 100)
+    val sp = sc.objectFile[(VertexId, ShortestPaths.SPMap)]("hdfs://ldiag-master:9000/user/isabel/sp-3590", 100)
     val sp_ = sp.flatMap(l => l._2.map(m => ((l._1, m._1), m._2)))
 
     val cand = computeCandidatePoints(traj_, graph.vertices, graph.edges)
-
     STMatchingReloaded(sc, traj_, sp_, cand)
   }
 
@@ -64,7 +63,7 @@ object MapMatching {
 
     val tpoint = traj.map{l => ((l._1, l._2._1), l._2._2)}
     val tpointMap = tpoint.collectAsMap() //map from each trajectory point (represented by a pair of Long, Int) to its Point
-    val spMap = sc.broadcast(sp.collectAsMap())
+    //val spMap = sc.broadcast(sp.collectAsMap())
 
     val candPoint = cand.join(tpoint).flatMap{l => l._2._1.map{m =>
       (l._1._1, l._1._2, observationProbability(m._2, l._2._2), m._1.srcId, m._2)}
@@ -76,18 +75,29 @@ object MapMatching {
 
     val temp = candPoint.map{l => ((l._1._1, l._1._2), (l._1._4, l._2))}.cache()
 
-    val tempMap = temp.groupByKey().collectAsMap()
+    val tempMap = temp.groupByKey()//.collectAsMap()
 
-    val edges = temp.flatMap{l =>
+    val temp2 = temp.map{case (a, b) => ((a._1, a._2 + 1), b)}
+    val joined = temp2.join(tempMap).flatMap{l => l._2._2.map{m => ((l._2._1._1, m._1), ((l._2._1._2, m._2), l._1))}}
+
+    val edges = joined.join(sp).distinct().map{l =>
+      val id = l._2._1._2
+      val p1 = tpointMap(id._1, id._2 - 1)
+      val p2 = tpointMap(id._1, id._2)
+      val transProb = euclideanDistance(p1, p2) / l._2._2
+      Edge(l._2._1._1._1, l._2._1._1._2, transProb)
+    }
+
+  /*  val edges = temp.flatMap{l =>
       if(tempMap.contains(l._1._1, l._1._2 + 1)) {
         val cp = tempMap(l._1._1, l._1._2 + 1)
         cp.map{ m =>
           val p1 = tpointMap(l._1._1, l._1._2)
           val p2 = tpointMap(l._1._1, l._1._2 + 1)
-          if(spMap.value.contains(l._2._1, m._1)) {
+          if(spMap.contains(l._2._1, m._1)) {
             val c1 = l._2._1
             val c2 = m._1
-            val transProb = euclideanDistance(p1, p2) / spMap.value(c1, c2)
+            val transProb = euclideanDistance(p1, p2) / spMap(c1, c2)
             Edge(l._2._2, m._2, transProb)
           } else {
             val transProb = 0.0
@@ -98,7 +108,7 @@ object MapMatching {
         Iterator.empty
       }
     }
-
+*/
     val new_graph = Graph(vertices, edges)
 
     val sssp = new_graph.pregel((-1.toLong, -1.toDouble))(
@@ -114,27 +124,35 @@ object MapMatching {
       },
       (a, b) => if (math.max(a._2, b._2) == a._2) a else b
     )
-    val parent = sssp.vertices.filter(v => v._2._1 != None).map(v => (v._1, v._2._1.asInstanceOf[Long])).collectAsMap() //parent map
-    //val destVertices = sssp.mapVertices((vid, data) => 0).vertices.minus(sssp.outDegrees) //destination vertices
+
+    //val parent = sssp.vertices.filter(v => v._2._1 != None).map(v => (v._1, v._2._1.asInstanceOf[Long])).collectAsMap() //parent map
 
     val vertexToTrajMap = candPoint.map{l => (l._2, l._1._1)}.collectAsMap()
     val maxKeys = sssp.mapVertices{(id, v) => (vertexToTrajMap(id), v._2)}.vertices.groupBy(_._2._1).map{v => v._2.max}.collectAsMap()
+    val sssp2 = sssp.reverse.mapVertices{(id, v) => if (maxKeys.contains(id)) (true, v._1, Seq(id)) else (false, v._1, Seq(id))}
 
-    val sssp2 = sssp.reverse.mapVertices{(id, v) => (v._1, Seq.empty[VertexId])}
+    val vertexToTraj = candPoint.map{l => (l._2, l._1._1)}
+    val maxKeys2 = sssp.vertices.join(vertexToTraj).map{l => (l._1, (l._2._2, l._2._1._2))}.groupBy(_._2._1).map{v => v._2.max}
+    val sssp3 = sssp.reverse.vertices.join(maxKeys2).map{l => (true, l._2._1._1, Seq(l._1))}
 
     val backtrack = sssp2.pregel(Seq.empty[VertexId])(
       (id, vd, msg) => {
-        if(msg != Seq.empty[VertexId]) (vd._1, vd._2 ++ msg) else (vd._1, vd._2 ++ msg)
+        if(msg == Seq.empty[VertexId]) vd else (true, vd._2, Seq(id) ++ msg)
       },
       triplet => {
-        if(triplet.dstId == triplet.srcAttr._1) {
-          Iterator((triplet.dstId, triplet.srcAttr._2))
+        if(triplet.dstId == triplet.srcAttr._2.asInstanceOf[Long] && triplet.srcAttr._1 && !triplet.dstAttr._1) {
+          Iterator((triplet.dstId, triplet.srcAttr._3))
         } else {
           Iterator.empty
         }
       },
       (a, b) => a
     )
+
+    //val destVert = sssp2.mapVertices((vid, data) => 0).vertices.minus(sssp2.outDegrees).collectAsMap() //destination vertices
+    backtrack.vertices.take(20).foreach(println)
+
+    //backtrack.vertices.filter(v => destVert.contains(v._1) && maxKeys.contains(v._2._3.last)).mapValues(v => v._3).take(5).foreach(println)
   }
 
   def STMatching(traj: RDD[(Long, (Int, Point))], sp: RDD[((VertexId, VertexId), Int)],
