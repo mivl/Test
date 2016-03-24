@@ -127,15 +127,19 @@ object MapMatching {
 
     //val parent = sssp.vertices.filter(v => v._2._1 != None).map(v => (v._1, v._2._1.asInstanceOf[Long])).collectAsMap() //parent map
 
-    val vertexToTrajMap = candPoint.map{l => (l._2, l._1._1)}.collectAsMap()
-    val maxKeys = sssp.mapVertices{(id, v) => (vertexToTrajMap(id), v._2)}.vertices.groupBy(_._2._1).map{v => v._2.max}.collectAsMap()
-    val sssp2 = sssp.reverse.mapVertices{(id, v) => if (maxKeys.contains(id)) (true, v._1, Seq(id)) else (false, v._1, Seq(id))}
+    //val vertexToTrajMap = candPoint.map{l => (l._2, l._1._1)}.collectAsMap()
+    //val maxKeys = sssp.mapVertices{(id, v) => (vertexToTrajMap(id), v._2)}.vertices.groupBy(_._2._1).map{v => v._2.max}.collectAsMap()
+    //val sssp2 = sssp.reverse.mapVertices{(id, v) => if (maxKeys.contains(id)) (true, v._1, Seq(id)) else (false, v._1, Seq(id))}
 
     val vertexToTraj = candPoint.map{l => (l._2, l._1._1)}
     val maxKeys2 = sssp.vertices.join(vertexToTraj).map{l => (l._1, (l._2._2, l._2._1._2))}.groupBy(_._2._1).map{v => v._2.max}
-    val sssp3 = sssp.reverse.vertices.join(maxKeys2).map{l => (true, l._2._1._1, Seq(l._1))}
+    val sssp2_v = sssp.vertices.leftJoin(maxKeys2){(id, a, b) => if(b == None) (false, a._1, Seq(id)) else (true, a._1, Seq(id))}
+    val sssp2_e = sssp.edges.reverse
+    val sssp3 = Graph(sssp2_v, sssp2_e)
 
-    val backtrack = sssp2.pregel(Seq.empty[VertexId])(
+    //sssp2_v.take(100).foreach(println)
+
+    val backtrack = sssp3.pregel(Seq.empty[VertexId])(
       (id, vd, msg) => {
         if(msg == Seq.empty[VertexId]) vd else (true, vd._2, Seq(id) ++ msg)
       },
