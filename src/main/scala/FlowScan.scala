@@ -78,8 +78,8 @@ object FlowScan {
 
     neps.map{ e =>
       (e._1, e._2.filter{ l =>
-        val t_1 = trafficMap.get(e._1.attr).head
-        val t_2 = trafficMap.get(l.attr).head
+        val t_1 = trafficMap(e._1.attr)
+        val t_2 = trafficMap(l.attr)
         val t_fin = t_1.toSet.intersect(t_2.toSet)
         t_fin.size >= minTraffic
       })
@@ -99,11 +99,11 @@ object FlowScan {
 
     while(!actual.equals(s) && eps_count < eps && flag) {
 
-      val children = graph.get(actual.dstId).head
+      val children = graph(actual.dstId)
       val actual_dtdr = dtdr.get(actual)
 
       children.foreach(l =>
-        if (actual_dtdr.head.contains(l) && traffic.get(actual.attr).head.toSet.intersect(traffic.get(l.attr).head.toSet).size >= minTraffic) {
+        if (actual_dtdr.head.contains(l) && traffic(actual.attr).toSet.intersect(traffic(l.attr).toSet).size >= minTraffic) {
         // condition #1 and #2
           q.enqueue(l)
         }
@@ -187,7 +187,7 @@ object FlowScan {
       val actual_dtdr = dtdr.get(actual)
 
       children.foreach(l =>
-        if (actual_dtdr.head.contains(l) && traffic.get(actual.attr).head.toSet.intersect(traffic.get(l.attr).head.toSet).size >= minTraffic) {
+        if (actual_dtdr.head.contains(l) && traffic(actual.attr).toSet.intersect(traffic(l.attr).toSet).size >= minTraffic) {
           // condition #1 and #2
           q.enqueue(l)
         }
