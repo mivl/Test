@@ -36,7 +36,8 @@ object Main {
 
     val jobName = "Distances"
 
-    val conf = new SparkConf().setAppName(jobName).setMaster("spark://ldiag-master:7077").set("spark.executor.memory", "6g").set("spark.driver.memory", "2g")
+    val conf = new SparkConf().setAppName(jobName).setMaster("spark://ldiag-master:7077").
+      set("spark.executor.memory", "6g").set("spark.driver.memory", "3g")//.set("spark.storage.memoryFraction", "0.3")
 
     //val conf = new SparkConf().setAppName(jobName).setMaster("local[*]")
     val sc = new SparkContext(conf)
@@ -47,9 +48,13 @@ object Main {
     //val nodes = sc.textFile("3760-Nodes.txt")
     //val traj = sc.textFile("3760.txt")
 
-    val edges = sc.textFile("hdfs://ldiag-master:9000/user/isabel/3760-Edges.txt")
-    val nodes = sc.textFile("hdfs://ldiag-master:9000/user/isabel/3760-Nodes.txt")
-    val traj = sc.textFile("hdfs://ldiag-master:9000/user/isabel/3760.txt")
+    val edges = sc.textFile("hdfs://ldiag-master:9000/user/isabel/beijing/beijing-Edges.txt", 100)
+    val nodes = sc.textFile("hdfs://ldiag-master:9000/user/isabel/beijing/beijing-Nodes.txt", 100)
+    val traj = sc.textFile("hdfs://ldiag-master:9000/user/isabel/9754_copy.txt", 100)
+
+    /*val edges = sc.textFile("hdfs://ldiag-master:9000/user/isabel/????-Edges.txt")
+    val nodes = sc.textFile("hdfs://ldiag-master:9000/user/isabel/????-Nodes.txt")
+    val traj = sc.textFile("hdfs://ldiag-master:9000/user/isabel/Waze_Point_Data.csv")*/
 
     val mm = MapMatching.run(sc, edges, nodes, traj)
 
