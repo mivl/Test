@@ -13,58 +13,26 @@ import org.apache.log4j.Level
 
 object Main {
 
-  //Computes midpoint between two points
-  def midpoint(p1: (Double, Double), p2: (Double, Double)): (Double, Double) = {
-    val lat1 = math.toRadians(p1._1)
-    val lon1 = math.toRadians(p1._2)
-    val lat2 = math.toRadians(p2._1)
-    val lon2 = math.toRadians(p2._2)
-
-    val bx = math.cos(lat2) * math.cos(lon2 - lon1)
-    val by = math.cos(lat2) * math.sin(lon2 - lon1)
-    val lat3 = math.atan2(math.sin(lat1) + math.sin(lat2), math.sqrt((math.cos(lat1) + bx) * (math.cos(lat1) + bx) + by*by))
-    val lon3 = lon1 + math.atan2(by, math.cos(lat1) + bx)
-
-    (Math.toDegrees(lat3), Math.toDegrees(lon3))
-  }
-
   def main(arg: Array[String]) {
     val startTime = System.currentTimeMillis()
 
     Logger.getLogger("org").setLevel(Level.OFF)
     Logger.getLogger("akka").setLevel(Level.OFF)
 
-    val jobName = "Distances"
+    val jobName = "MapMatching"
 
     val conf = new SparkConf().setAppName(jobName).setMaster("spark://ldiag-master:7077").
-      set("spark.executor.memory", "6g").set("spark.driver.memory", "3g")//.set("spark.storage.memoryFraction", "0.3")
+      set("spark.executor.memory", "6g").set("spark.driver.memory", "3g")
 
-    //val conf = new SparkConf().setAppName(jobName).setMaster("local[*]")
     val sc = new SparkContext(conf)
 
     sc.addJar("/home/isabel/IdeaProjects/Test/target/scala-2.10/Test-assembly-1.0.jar")
 
-    //val edges = sc.textFile("3760-Edges.txt")
-    //val nodes = sc.textFile("3760-Nodes.txt")
-    //val traj = sc.textFile("3760.txt")
-
-    val edges = sc.textFile("hdfs://ldiag-master:9000/user/isabel/beijing/beijing-Edges.txt", 100)
-    val nodes = sc.textFile("hdfs://ldiag-master:9000/user/isabel/beijing/beijing-Nodes.txt", 100)
-    val traj = sc.textFile("hdfs://ldiag-master:9000/user/isabel/9754_copy.txt", 100)
-
-    /*val edges = sc.textFile("hdfs://ldiag-master:9000/user/isabel/????-Edges.txt")
-    val nodes = sc.textFile("hdfs://ldiag-master:9000/user/isabel/????-Nodes.txt")
-    val traj = sc.textFile("hdfs://ldiag-master:9000/user/isabel/Waze_Point_Data.csv")*/
+    val edges = sc.textFile("hdfs://ldiag-master:9000/user/isabel/fortaleza/graph_edges.txt", 200)
+    val nodes = sc.textFile("hdfs://ldiag-master:9000/user/isabel/fortaleza/graph_nodes.txt", 200)
+    val traj = sc.textFile("hdfs://ldiag-master:9000/user/isabel/650_ex.txt", 200)
 
     val mm = MapMatching.run(sc, edges, nodes, traj)
-
-    /*val vertSeq = graph_.vertices.map(v => v._1).collect().toSeq
-    val sp = ShortestPaths.run(graph_, vertSeq)
-    sp.vertices.collect().foreach(println)
-    sp.vertices.saveAsObjectFile("hdfs://ldiag-master:9000/user/isabel/sp")*/
-
-    //val spp = sc.objectFile[(VertexId, ShortestPaths.SPMap)]("hdfs://ldiag-master:9000/user/isabel/sp")
-    //spp.collect().foreach(println)
 
     val elapsedTime = System.currentTimeMillis() - startTime
     println("Time: " + elapsedTime + " ms")

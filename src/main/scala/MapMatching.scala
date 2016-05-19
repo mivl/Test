@@ -13,69 +13,59 @@ import scala.math._
  * Created by isabel on 18/11/15.
  */
 
-case class Point(lat: Double, lng: Double) //extends (Double, Double)(lat, lng)
+case class Point(lat: Double, lng: Double)
 
 object MapMatching {
 
   def run(sc: SparkContext, edges: RDD[String], vert: RDD[String], traj: RDD[String]): Unit = {
-    /*val traj_ = traj.map{ line =>
-      val fields = line.split(" ")
-      (fields(0).toLong, (fields(1).toInt, Point(fields(3).toDouble, fields(4).toDouble)))
-    }*/
 
+    // (id, timestamp, Point(lat, lng))
     val traj_ = traj.map{ line =>
       val fields = line.split(",")
-      (fields(0).toLong, Point(fields(3).toDouble, fields(2).toDouble))
+      (fields(0).toLong, Point(fields(2).toDouble, fields(3).toDouble))
     }.zipWithIndex().map(l => (l._1._1, (l._2, l._1._2)))
 
+    // (srcId, dstId, 0)
     val edges_ = edges.map{ line =>
       val fields = line.split(",")
       Edge(fields(1).toLong, fields(2).toLong, 0.toLong)
     }
 
+    // (id, Point(lat, lng))
     val vert_ = vert.map{ line =>
       val fields = line.split(",")
       (fields(0).toLong, Point(fields(1).toDouble, fields(2).toDouble))
     }
 
-    val graph = Graph(vert_, edges_)
+    val graph = Graph(vert_, edges_).cache()
 
-    graph.cache()
+    //val vertSeq = graph.vertices.map(v => v._1).collect().toSeq
+    //val sp = ShortestPaths.run(graph, vertSeq)
+    //sp.vertices.saveAsObjectFile("hdfs://ldiag-master:9000/user/isabel/fortaleza/shortest_paths")
 
-    /*val vertSeq = graph.vertices.map(v => v._1).collect().toSeq
-    val sp = ShortestPaths.run(graph, vertSeq)
-    sp.vertices.saveAsObjectFile("hdfs://ldiag-master:9000/user/isabel/sp-beijing")*/
-
-    val sp = sc.objectFile[(VertexId, ShortestPaths.SPMap)]("hdfs://ldiag-master:9000/user/isabel/beijing/sp-beijing", 100)
+    // Loads a map of shortest path distances between closer vertices
+    val sp = sc.objectFile[(VertexId, ShortestPaths.SPMap)]("hdfs://ldiag-master:9000/user/isabel/fortaleza/shortest_paths", 100)
     val sp_ = sp.flatMap(l => l._2.map(m => ((l._1, m._1), m._2)))
 
     val cand = computeCandidatePoints(sc, traj_, graph.vertices, graph.edges)
 
-    val traj2 = traj_.map(l => ((l._1, l._2._1), l._2._2))
-    val candidatePoints = cand.join(traj2).flatMap(l => l._2._1.map(m =>
-      (l._1, observationProbability(m._2, l._2._2), m._1.srcId, m._2, m._1)
-    )).zipWithUniqueId().cache()
-
-    STMatching(candidatePoints, traj_, sp_, cand)
-    /*val stm2 = STMatching(candidatePoints, traj_, sp_, cand)
-    val stm3 = STMatching(candidatePoints, traj_, sp_, cand)
-
-    vert_.count()*/
+    STMatching(traj_, sp_, cand)
   }
 
-  def STMatching(candidatePoints: RDD[(((Long, Long), Double, VertexId, Point, Edge[Long]), Long)], traj: RDD[(Long, (Long, Point))], sp: RDD[((VertexId, VertexId), Int)],
-                 cand: RDD[((Long, Long), Iterable[(Edge[Long], Point)])]): /*RDD[(Long, Seq[Point])]*/ Unit = {
+  def STMatching(traj: RDD[(Long, (Long, Point))], sp: RDD[((VertexId, VertexId), Int)],
+                 cand: RDD[((Long, Long), Iterable[(Edge[Long], Point)])]): RDD[(Long, Seq[Point])] = {
 
-    /*val traj_ = traj.map(l => ((l._1, l._2._1), l._2._2))
+    val traj_ = traj.map(l => ((l._1, l._2._1), l._2._2))
 
     val candidatePoints = cand.join(traj_).flatMap(l => l._2._1.map(m =>
       (l._1, observationProbability(m._2, l._2._2), m._1.srcId, m._2, m._1)
-    )).zipWithUniqueId().cache()*/
+    )).zipWithUniqueId().cache()
 
-    val minTimestamp = candidatePoints.map(l => (l._1._1._1, (l._1._1._2, l._2, l._1._2)))
-    .map(l => (l._1, Iterable(l._2))).reduceByKey((a, b) => a ++ b).map(l => (l, l._2.minBy(_._2)._2)).flatMap(l => l._1._2.map(m => (l._1._1, m, l._2)))
+    //val minTimestamp = candidatePoints.map(l => (l._1._1._1, (l._1._1._2, l._2, l._1._2)))
+    //.map(l => (l._1, Iterable(l._2))).reduceByKey((a, b) => a ++ b).map(l => (l, l._2.minBy(_._2)._2)).flatMap(l => l._1._2.map(m => (l._1._1, m, l._2)))
+    //val vertices = minTimestamp.map(l => if(l._2._1 == l._3) (l._2._2, (Seq(l._2._2), l._2._3)) else (l._2._2, (Seq.empty[VertexId], l._2._3)))
 
-    val vertices = minTimestamp.map(l => if(l._2._1 == l._3) (l._2._2, (Seq(l._2._2), l._2._3)) else (l._2._2, (Seq.empty[VertexId], l._2._3)))
+    val vertices = candidatePoints.map(l => if(l._1._1._2 == 0) (l._2, (Seq(l._2), l._1._2)) else (l._2, (Seq.empty[VertexId], l._1._2)))
 
     val left = candidatePoints.map(l => (l._1._1, (l._1._3, l._2))).join(traj.map(l => ((l._1, l._2._1), l._2._2))).map(l => (l._1, (l._2._1._1, l._2._1._2, l._2._2)))
 
@@ -109,23 +99,16 @@ object MapMatching {
       (a, b) => if (math.max(a._2, b._2) == a._2) a else b
     )
 
+    //sssp.vertices.collect().foreach(println)
+
     val trajInd = candidatePoints.map(l => (l._2, l._1._1._1))
-
     val paths = sssp.vertices.join(trajInd).map(l => (l._2._2, l._2._1)).groupByKey().map(l => (l._1, l._2.maxBy(_._2)._1))
-    //paths.filter(l => l._1 == 9754).collect().foreach(println)
-    //println("---")
-
-    //paths.take(10).foreach(println)
-
     val tPtsCount = traj.groupByKey().map(l => (l._1, l._2.size))
 
     val r = paths.join(tPtsCount).map(l => if(l._2._1.size == l._2._2) (l._1, (l._2._1, true)) else (l._1, (l._2._1, false)))
     val edges1 = candidatePoints.map(l => (l._2, l._1._4)).collectAsMap()
     val f = r.map(l => (l._1, l._2._1.map(m => edges1(m))))
-    println(toPrintable(f.filter(l => l._1 == 9754).first()._2))
-    //println()
-    //toPrintable2(traj.groupByKey().filter(l => l._1 == 9754).flatMap(l => l._2)).collect().foreach(println)
-    //f
+    f
   }
 
   def computeCandidatePoints(sc: SparkContext, traj: RDD[(Long, (Long, Point))], vert: RDD[(VertexId, Point)],
@@ -141,14 +124,10 @@ object MapMatching {
       ((l._1, l._2._1), nearest.map(m => toVertexId(Point(m._1, m._2))))
     }
 
-    //candTemp.saveAsObjectFile("hdfs://ldiag-master:9000/user/isabel/candTemp")
-
     val nearEdges = edges.map(l => (l.srcId, l)).union(edges.map(l => (l.dstId, l)))
       .map(l => (l._1, Iterable(l._2))).reduceByKey((a, b) => a ++ b)
 
-    //val candTemp = sc.objectFile[((Long, Long), Seq[Long])]("hdfs://ldiag-master:9000/user/isabel/candTemp", 100)
-
-    val candEdges_ = candTemp.flatMapValues(m => m).map(l => (l._2, l._1)).join(nearEdges) //marked
+    val candEdges_ = candTemp.flatMapValues(m => m).map(l => (l._2, l._1)).join(nearEdges)
     val candEdges = candEdges_.map(l => l._2).map(l => (l._1, Iterable(l._2))).reduceByKey((a, b) => a ++ b).flatMapValues(m => m).mapValues(l => l.toSeq.distinct)
 
     val trajMap = traj.map(l => ((l._1, l._2._1), l._2._2)).collectAsMap()
